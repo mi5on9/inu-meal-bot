@@ -27,4 +27,5 @@ jobs:
       - name: Run meal crawler
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          TZ: Asia/Seoul
         run: python main.py
