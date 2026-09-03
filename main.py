@@ -1,3 +1,25 @@
+import os
+import requests
+from bs4 import BeautifulSoup
+from datetime import datetime
+import zoneinfo # Python 3.9+ 기본 라이브러리
+
+# 한국 표준시(KST) 명확히 설정
+kst = zoneinfo.ZoneInfo("Asia/Seoul")
+today = datetime.now(kst)
+
+# 요일 번호 (월: 0, 화: 1, 수: 2, 목: 3, 금: 4, 토: 5, 일: 6)
+weekday = today.weekday()
+
+# 인천대 생협 차단 방지용 Header 설정 (필수!)
+headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+}
+
+# requests 요청 시 headers 적용
+# url = "..."
+# response = requests.get(url, headers=headers)
+
 import datetime
 import json
 import os
