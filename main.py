@@ -6,7 +6,7 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 import zoneinfo # Python 3.9+ 기본 라이브러리
 
-# 디스코드 웹훅 URL 설정 (GitHub Secrets 우선 적용)
+# 디스코드 웹훅 URL 설정
 DISCORD_WEBHOOK_URL = os.environ.get(
     "DISCORD_WEBHOOK_URL",
     "https://discord.com/api/webhooks/1544879632577470587/fbc0TdvyVlERYLiwkwwuhJfBT5YwWM2ZyniwjWAgTNgfR7keBUY6Vo-AEoZnuHrRDOu9",
@@ -42,7 +42,7 @@ def clean_menu_content(text):
     for line in lines:
         line_str = line.strip()
 
-        # 1. '목' 이나 '(09/03)' 같은 표 헤더 날짜 텍스트 제거
+        # 1. 헤더 날짜 텍스트 제거
         if day_pattern.match(line_str) or date_pattern.match(line_str):
             continue
 
@@ -76,7 +76,7 @@ def get_today_menu():
 
     days = ["월", "화", "수", "목", "금", "토", "일"]
     
-    # 🔥 [중요 수정] GitHub 서버(UTC)에서도 한국 시간(KST)을 정확히 가져오도록 설정
+    # 한국 표준시(KST) 명확히 설정
     kst = zoneinfo.ZoneInfo("Asia/Seoul")
     now = datetime.now(kst)
     
@@ -89,34 +89,36 @@ def get_today_menu():
         soup = BeautifulSoup(res.text, "html.parser")
 
         tables = soup.find_all("table")
+        
+        # 오늘 요일에 해당하는 열(index) 찾기 및 해당 테이블 감지
         target_table = None
+        col_index = -1
+
         for tbl in tables:
-            if "중식" in tbl.text or "백반" in tbl.text:
-                target_table = tbl
+            rows = tbl.find_all("tr")
+            if not rows:
+                continue
+            
+            header_cells = [cell.get_text(strip=True) for cell in rows[0].find_all(["th", "td"])]
+            
+            for idx, text in enumerate(header_cells):
+                # 헤더 셀 안에 오늘 요일(예: '목')이 포함되어 있는지 확인
+                if today_weekday in text:
+                    col_index = idx
+                    target_table = tbl
+                    break
+            
+            if target_table:
                 break
 
-        if not target_table:
+        if not target_table or col_index == -1:
             return f"📅 **{today_str}**\n오늘 등록된 학식 메뉴가 없습니다."
 
         rows = target_table.find_all("tr")
-
-        header_row = rows[0]
-        headers_text = [
-            cell.get_text(strip=True) for cell in header_row.find_all(["th", "td"])
-        ]
-
-        col_index = -1
-        for idx, text in enumerate(headers_text):
-            if today_weekday in text:
-                col_index = idx
-                break
-
-        if col_index == -1:
-            col_index = 4
-
         result_text = f"📅 **{today_str} 인천대 학식**\n"
         result_text += "─────────────────────────\n\n"
 
+        menu_added = False
         for row in rows[1:]:
             cells = row.find_all(["td", "th"])
             if not cells:
@@ -131,6 +133,7 @@ def get_today_menu():
                 if (
                     "오늘 등록된" in raw_menu
                     or "등록된 메뉴가 없습니다" in raw_menu
+                    or not raw_menu
                 ):
                     continue
 
@@ -138,6 +141,10 @@ def get_today_menu():
 
                 if category and menu_content:
                     result_text += f"📌 **{category}**\n{menu_content}\n\n"
+                    menu_added = True
+
+        if not menu_added:
+            return f"📅 **{today_str}**\n오늘 등록된 학식 메뉴가 없습니다."
 
         return result_text
 
