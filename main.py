@@ -11,8 +11,8 @@ DISCORD_WEBHOOK_URL = os.environ.get(
 )
 
 
-def clean_menu_text(text):
-    """가격, 날짜 및 불필요한 기호를 제거하고 순수 메뉴와 칼로리만 남깁니다."""
+def clean_menu_content(text):
+    """가격, 날짜 및 불필요한 기호를 제거하고 순수 메뉴만 정돈합니다."""
     lines = text.split("\n")
     cleaned_lines = []
 
@@ -22,7 +22,7 @@ def clean_menu_text(text):
     for line in lines:
         line_str = line.strip()
 
-        # 1. 요일/날짜 텍스트 제거
+        # 1. 요일/날짜 헤더 제거
         if day_pattern.match(line_str) or date_pattern.match(line_str):
             continue
 
@@ -30,7 +30,7 @@ def clean_menu_text(text):
         if "원" in line_str or "구성원" in line_str or re.search(r"\d+원", line_str):
             continue
 
-        # 3. 칼로리 변환 및 정제
+        # 3. 칼로리 및 메뉴 텍스트 정돈
         if line_str and line_str not in ["\"'", "''", '""', '-', '─']:
             line_str = line_str.replace('"', "").replace("'", "")
 
@@ -45,7 +45,7 @@ def clean_menu_text(text):
 
 
 def get_today_menu():
-    # 인천대 학생식당(11호관) URL
+    # 인천대 학생식당(11호관) 정확한 URL
     url = "https://www.inucoop.com/main.php?mkey=2&w=2"
     headers = {
         "User-Agent": (
@@ -56,12 +56,20 @@ def get_today_menu():
 
     days = ["월", "화", "수", "목", "금", "토", "일"]
 
-    # 💡 표준 datetime만 사용하여 KST (UTC+9) 날짜 구하기 (가장 안전한 방식)
+    # KST (UTC+9) 날짜 구하기
     kst = timezone(timedelta(hours=9))
     now = datetime.now(kst)
 
-    today_weekday = days[now.weekday()]
+    weekday_idx = now.weekday()  # 0:월, 1:화, 2:수, 3:목, 4:금, 5:토, 6:일
+    today_weekday = days[weekday_idx]
     today_str = f"{now.month}월 {now.day}일 ({today_weekday}요일)"
+
+    # 주말인 경우 바로 안내 처리
+    if weekday_idx >= 5:
+        return f"📅 **{today_str}**\n주말은 식당을 운영하지 않습니다."
+
+    # 인천대 생협 표준 식단 표 구조: 0열(카테고리), 1열(월) ~ 5열(금)
+    col_index = weekday_idx + 1
 
     try:
         res = requests.get(url, headers=headers, timeout=10)
@@ -70,36 +78,20 @@ def get_today_menu():
 
         tables = soup.find_all("table")
 
-        result_text = f"📅 **{today_str} 인천대 학식**\n"
+        result_text = f"📅 **{today_str} 인천대 학생식당(11호관)**\n"
         result_text += "─────────────────────────\n\n"
 
         menu_added = False
 
         for tbl in tables:
             rows = tbl.find_all("tr")
-            if not rows:
+            if len(rows) <= 1:
                 continue
 
-            # 오늘 요일에 해당하는 열(Column) 찾기
-            col_index = -1
-            for row in rows[:3]:
-                cells = row.find_all(["th", "td"])
-                for idx, cell in enumerate(cells):
-                    cell_text = cell.get_text(strip=True)
-                    # 헤더 셀에 오늘 요일(예: '월')이 단독 혹은 날짜 형태로 포함되어 있는지 확인
-                    if today_weekday in cell_text and len(cell_text) <= 10:
-                        col_index = idx
-                        break
-                if col_index != -1:
-                    break
-
-            if col_index == -1:
-                continue
-
-            # 식단 행 순회
             for row in rows[1:]:
                 cells = row.find_all(["td", "th"])
 
+                # 셀 개수가 오늘 요일 열까지 미치지 못하면 패스
                 if len(cells) <= col_index:
                     continue
 
@@ -115,7 +107,7 @@ def get_today_menu():
                 ):
                     continue
 
-                menu_content = clean_menu_text(raw_menu)
+                menu_content = clean_menu_content(raw_menu)
 
                 if menu_content and len(menu_content) > 1:
                     category_title = (
