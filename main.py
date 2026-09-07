@@ -4,16 +4,16 @@ import requests
 from bs4 import BeautifulSoup
 from datetime import datetime, timezone, timedelta
 
-# 디스코드 웹훅 URL 설정 (GitHub Secrets 우선 적용)
+# 디스코드 웹훅 URL (GitHub Secrets 우선 적용)
 DISCORD_WEBHOOK_URL = os.environ.get(
     "DISCORD_WEBHOOK_URL",
     "https://discord.com/api/webhooks/1544879632577470587/fbc0TdvyVlERYLiwkwwuhJfBT5YwWM2ZyniwjWAgTNgfR7keBUY6Vo-AEoZnuHrRDOu9",
 )
 
 
-def clean_menu_content(text):
-    """가격, 날짜 및 불필요한 기호를 제거하고 순수 메뉴만 정돈합니다."""
-    lines = text.split("\n")
+def clean_menu_content(raw_text):
+    """가격, 날짜 및 불필요한 기호를 제거하고 순수 메뉴만 깔끔하게 남깁니다."""
+    lines = raw_text.split("\n")
     cleaned_lines = []
 
     day_pattern = re.compile(r"^[\s]*[월화수목금토일][\s]*$")
@@ -22,7 +22,10 @@ def clean_menu_content(text):
     for line in lines:
         line_str = line.strip()
 
-        # 1. 요일/날짜 헤더 제거
+        if not line_str:
+            continue
+
+        # 1. 요일/날짜 표기 제거
         if day_pattern.match(line_str) or date_pattern.match(line_str):
             continue
 
@@ -30,8 +33,8 @@ def clean_menu_content(text):
         if "원" in line_str or "구성원" in line_str or re.search(r"\d+원", line_str):
             continue
 
-        # 3. 칼로리 및 메뉴 텍스트 정돈
-        if line_str and line_str not in ["\"'", "''", '""', '-', '─']:
+        # 3. 칼로리 및 특수문자 정돈
+        if line_str not in ["\"'", "''", '""', '-', '─', '운영없음', '쉬어갑니다']:
             line_str = line_str.replace('"', "").replace("'", "")
 
             if "kcal" in line_str.lower():
@@ -45,7 +48,7 @@ def clean_menu_content(text):
 
 
 def get_today_menu():
-    # 인천대 학생식당(11호관) 정확한 URL
+    # 인천대 학생식당(11호관) URL
     url = "https://www.inucoop.com/main.php?mkey=2&w=2"
     headers = {
         "User-Agent": (
@@ -64,14 +67,17 @@ def get_today_menu():
     today_weekday = days[weekday_idx]
     today_str = f"{now.month}월 {now.day}일 ({today_weekday}요일)"
 
-    # 주말인 경우 바로 안내 처리
+    # 주말 예외 처리
     if weekday_idx >= 5:
         return f"📅 **{today_str}**\n주말은 식당을 운영하지 않습니다."
 
     try:
         res = requests.get(url, headers=headers, timeout=10)
         res.encoding = res.apparent_encoding or "euc-kr"
-        soup = BeautifulSoup(res.text, "html.parser")
+        
+        # HTML 파싱 전 br 태그를 실제 줄바꿈 문자로 변환 (핵심!)
+        html_content = res.text.replace("<br>", "\n").replace("<br/>", "\n").replace("<br />", "\n")
+        soup = BeautifulSoup(html_content, "html.parser")
 
         tables = soup.find_all("table")
 
@@ -85,31 +91,30 @@ def get_today_menu():
             if len(rows) <= 1:
                 continue
 
-            # 오늘 요일(예: '월')이 속한 열(Column) 인덱스 탐색
-            target_col = -1
+            # 오늘 요일(예: '월')이 있는 열(Column) 위치 찾기
+            col_index = -1
             for row in rows[:3]:
                 cells = row.find_all(["th", "td"])
                 for idx, cell in enumerate(cells):
                     cell_text = cell.get_text(strip=True)
                     if today_weekday in cell_text and len(cell_text) <= 12:
-                        target_col = idx
+                        col_index = idx
                         break
-                if target_col != -1:
+                if col_index != -1:
                     break
 
-            # 요일 헤더 탐색에 실패한 경우 월~금 기본 표준 인덱스(1~5) 지정
-            if target_col == -1:
-                target_col = weekday_idx + 1
+            # 요일 위치를 못 찾았다면 기본 인덱스(월=1, 화=2, 수=3, 목=4, 금=5) 지정
+            if col_index == -1:
+                col_index = weekday_idx + 1
 
             for row in rows[1:]:
                 cells = row.find_all(["td", "th"])
 
-                # 해당 행의 셀 개수가 목표 열 인덱스보다 적으면 스킵
-                if len(cells) <= target_col:
+                if len(cells) <= col_index:
                     continue
 
                 raw_category = cells[0].get_text(strip=True)
-                raw_menu = cells[target_col].get_text(separator="\n", strip=True)
+                raw_menu = cells[col_index].get_text()
 
                 if (
                     "오늘 등록된" in raw_menu
