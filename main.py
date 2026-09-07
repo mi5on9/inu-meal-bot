@@ -68,9 +68,6 @@ def get_today_menu():
     if weekday_idx >= 5:
         return f"📅 **{today_str}**\n주말은 식당을 운영하지 않습니다."
 
-    # 인천대 생협 표준 식단 표 구조: 0열(카테고리), 1열(월) ~ 5열(금)
-    col_index = weekday_idx + 1
-
     try:
         res = requests.get(url, headers=headers, timeout=10)
         res.encoding = res.apparent_encoding or "euc-kr"
@@ -88,15 +85,31 @@ def get_today_menu():
             if len(rows) <= 1:
                 continue
 
+            # 오늘 요일(예: '월')이 속한 열(Column) 인덱스 탐색
+            target_col = -1
+            for row in rows[:3]:
+                cells = row.find_all(["th", "td"])
+                for idx, cell in enumerate(cells):
+                    cell_text = cell.get_text(strip=True)
+                    if today_weekday in cell_text and len(cell_text) <= 12:
+                        target_col = idx
+                        break
+                if target_col != -1:
+                    break
+
+            # 요일 헤더 탐색에 실패한 경우 월~금 기본 표준 인덱스(1~5) 지정
+            if target_col == -1:
+                target_col = weekday_idx + 1
+
             for row in rows[1:]:
                 cells = row.find_all(["td", "th"])
 
-                # 셀 개수가 오늘 요일 열까지 미치지 못하면 패스
-                if len(cells) <= col_index:
+                # 해당 행의 셀 개수가 목표 열 인덱스보다 적으면 스킵
+                if len(cells) <= target_col:
                     continue
 
                 raw_category = cells[0].get_text(strip=True)
-                raw_menu = cells[col_index].get_text(separator="\n", strip=True)
+                raw_menu = cells[target_col].get_text(separator="\n", strip=True)
 
                 if (
                     "오늘 등록된" in raw_menu
