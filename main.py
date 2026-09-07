@@ -1,10 +1,8 @@
 import os
 import re
-import json
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime
-import zoneinfo  # Python 3.9+ 기본 라이브러리
+from datetime import datetime, timezone, timedelta
 
 # 디스코드 웹훅 URL 설정 (GitHub Secrets 우선 적용)
 DISCORD_WEBHOOK_URL = os.environ.get(
@@ -13,7 +11,7 @@ DISCORD_WEBHOOK_URL = os.environ.get(
 )
 
 
-def clean_menu_content(text):
+def clean_menu_text(text):
     """가격, 날짜 및 불필요한 기호를 제거하고 순수 메뉴와 칼로리만 남깁니다."""
     lines = text.split("\n")
     cleaned_lines = []
@@ -47,10 +45,8 @@ def clean_menu_content(text):
 
 
 def get_today_menu():
-    # 인천대 학생식당(11호관) 정확한 URL (mkey=2, w=2)
+    # 인천대 학생식당(11호관) URL
     url = "https://www.inucoop.com/main.php?mkey=2&w=2"
-    
-    # 💡 1. GitHub 서버에서도 일반 브라우저 접속으로 인식하게 하는 헤더
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,"
@@ -59,11 +55,11 @@ def get_today_menu():
     }
 
     days = ["월", "화", "수", "목", "금", "토", "일"]
-    
-    # 💡 2. GitHub 서버(UTC)에서도 항상 '한국 표준시(KST)' 날짜를 구하도록 고정
-    kst = zoneinfo.ZoneInfo("Asia/Seoul")
+
+    # 💡 표준 datetime만 사용하여 KST (UTC+9) 날짜 구하기 (가장 안전한 방식)
+    kst = timezone(timedelta(hours=9))
     now = datetime.now(kst)
-    
+
     today_weekday = days[now.weekday()]
     today_str = f"{now.month}월 {now.day}일 ({today_weekday}요일)"
 
@@ -73,8 +69,8 @@ def get_today_menu():
         soup = BeautifulSoup(res.text, "html.parser")
 
         tables = soup.find_all("table")
-        
-        result_text = f"📅 **{today_str} 인천대 학생식당(11호관)**\n"
+
+        result_text = f"📅 **{today_str} 인천대 학식**\n"
         result_text += "─────────────────────────\n\n"
 
         menu_added = False
@@ -84,13 +80,14 @@ def get_today_menu():
             if not rows:
                 continue
 
-            # 오늘 요일(예: '목')이 포함된 열(Column) 찾기
+            # 오늘 요일에 해당하는 열(Column) 찾기
             col_index = -1
             for row in rows[:3]:
                 cells = row.find_all(["th", "td"])
                 for idx, cell in enumerate(cells):
                     cell_text = cell.get_text(strip=True)
-                    if today_weekday in cell_text:
+                    # 헤더 셀에 오늘 요일(예: '월')이 단독 혹은 날짜 형태로 포함되어 있는지 확인
+                    if today_weekday in cell_text and len(cell_text) <= 10:
                         col_index = idx
                         break
                 if col_index != -1:
@@ -99,10 +96,10 @@ def get_today_menu():
             if col_index == -1:
                 continue
 
-            # 식단 데이터 파싱
+            # 식단 행 순회
             for row in rows[1:]:
                 cells = row.find_all(["td", "th"])
-                
+
                 if len(cells) <= col_index:
                     continue
 
@@ -118,10 +115,14 @@ def get_today_menu():
                 ):
                     continue
 
-                menu_content = clean_menu_content(raw_menu)
+                menu_content = clean_menu_text(raw_menu)
 
                 if menu_content and len(menu_content) > 1:
-                    category_title = f"📌 **{raw_category}**\n" if raw_category and len(raw_category) < 15 else ""
+                    category_title = (
+                        f"📌 **{raw_category}**\n"
+                        if raw_category and len(raw_category) < 15
+                        else "📌 **오늘의 메뉴**\n"
+                    )
                     result_text += f"{category_title}{menu_content}\n\n"
                     menu_added = True
 
@@ -141,12 +142,14 @@ def send_discord_meal_notice(menu_text):
     payload = {
         "username": "인천대 학식 알리미",
         "avatar_url": "https://cdn-icons-png.flaticon.com/512/3405/3405255.png",
-        "embeds": [{
-            "title": "🍱 오늘의 학식 메뉴",
-            "url": "https://www.inucoop.com/main.php?mkey=2&w=2",
-            "description": menu_text,
-            "color": 3447003,
-        }],
+        "embeds": [
+            {
+                "title": "🍱 오늘의 학식 메뉴",
+                "url": "https://www.inucoop.com/main.php?mkey=2&w=2",
+                "description": menu_text,
+                "color": 3447003,
+            }
+        ],
     }
 
     res = requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=10)
